@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include "pico/stdlib.h"
 
-#include "../inc/disp_lcd.h"
-#include "../inc/hw_spi0.h"
+#include "disp_lcd.h"
+#include "hw_spi0.h"
 
 
 // platform-specific
@@ -132,15 +132,11 @@ const uint8_t cmd_init_std[] = {	// Init commands for 7789 screens
 };
 
 //*************************** User Functions ***************************//
-void st7789_init(const uint16_t width, const uint16_t height, const uint8_t rotation);
-
 void st7789_hw_draw_pixel(uint8_t x, uint8_t y, uint16_t color);
 //void drawHLine(uint8_t x, uint8_t y, uint8_t w, uint16_t color);
 //void drawVLine(uint8_t x, uint8_t y, uint8_t h, uint16_t color);
-void st7789_hw_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color);
 void st7789_hw_fill_screen(uint16_t color);
 void st7789_set_rotation(uint8_t rotation);
-void st7789_set_addr_window(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 void st7789_set_addr_window_full();
 void st7789_invert_display(bool i);
 
@@ -247,8 +243,8 @@ void st7789_init(const uint16_t width, const uint16_t height, const uint8_t rota
 
 	// set rotation (and bounds)
   	st7789_set_rotation(rotation);
-	st7789_hw_fill_screen(ST7789_BLUE);
-	st7789_hw_fill_rect(16, 16, 16, 16, ST7789_RED);
+	st7789_hw_fill_screen(ST7789_BLACK);
+	//st7789_hw_fill_rect(16, 16, 16, 16, ST7789_RED); // testing
 	st7789_set_addr_window_full();
 }
 
@@ -261,7 +257,7 @@ void st7789_init(const uint16_t width, const uint16_t height, const uint8_t rota
   @param  h  Height of window
 */
 /**************************************************************************/
-void st7789_set_addr_window(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+void st7789_set_addr_window(int16_t x, int16_t y, uint16_t w, uint16_t h) {
 	uint16_t nx, ny, nw, nh;
 	uint8_t d[4];
 	
@@ -450,7 +446,7 @@ void drawVLine(uint8_t x, uint8_t y, uint8_t h, uint16_t color) {
 	@param    color 16-bit 5-6-5 Color to fill with
 */
 /**************************************************************************/
-void st7789_hw_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
+void st7789_hw_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
 	if ((x < st7789.w) && (y < st7789.h) && w && h) {
 		uint8_t hi = color >> 8, lo = color;
 		uint32_t px;

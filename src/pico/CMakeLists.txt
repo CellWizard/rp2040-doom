@@ -22,7 +22,17 @@ if (PICO_ON_DEVICE)
             PICO_HEAP_SIZE=0
             USE_ZONE_FOR_MALLOC=1
     )
-    target_link_libraries(common_pico INTERFACE  hardware_i2c)
+    target_link_libraries(common_pico INTERFACE hardware_i2c)
+
+    # lcd support
+    target_sources(common_pico INTERFACE
+        ${CMAKE_CURRENT_LIST_DIR}/lcd/hw_spi0.c
+        ${CMAKE_CURRENT_LIST_DIR}/lcd/hw_spi0.h
+        ${CMAKE_CURRENT_LIST_DIR}/lcd/disp_init.c
+        ${CMAKE_CURRENT_LIST_DIR}/lcd/disp_st7789.c
+        ${CMAKE_CURRENT_LIST_DIR}/lcd/disp_lcd.h
+    )
+target_link_libraries(common_pico INTERFACE hardware_spi hardware_dma)
 endif()
 target_include_directories(common_pico INTERFACE
         ${CMAKE_CURRENT_LIST_DIR}

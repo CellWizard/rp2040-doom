@@ -10,13 +10,11 @@
 
 #include "hardware/resets.h"
 
-#include "../inc/disp_lcd.h"
-#include "../inc/hw_spi0.h"
+#include "disp_lcd.h"
+#include "hw_spi0.h"
 
 
-#define SPI_DEV     spi0
-
-#define SPI_CLK_MHZ         10
+#define SPI_DEV             spi0
 
 
 int spi0_dmatx;
@@ -29,10 +27,10 @@ void spi0_init(uint mosi, uint sck, uint nss, uint32_t clock, spi0_mode_t mode)
     spi_cpha_t cpha;
 
     switch (mode) {
-        case SPI0_MODE0: cpol = SPI_CPOL_0; cpha = SPI_CPHA_0; break;
         case SPI0_MODE1: cpol = SPI_CPOL_0; cpha = SPI_CPHA_1; break;
         case SPI0_MODE2: cpol = SPI_CPOL_1; cpha = SPI_CPHA_0; break;
         case SPI0_MODE3: cpol = SPI_CPOL_1; cpha = SPI_CPHA_1; break;
+        default:         cpol = SPI_CPOL_0; cpha = SPI_CPHA_0; break;
     }
 
     // reset SPI
@@ -55,7 +53,8 @@ void spi0_init(uint mosi, uint sck, uint nss, uint32_t clock, spi0_mode_t mode)
     gpio_set_function(mosi, GPIO_FUNC_SPI);
 
     // get unused DMA
-    spi0_dmatx = dma_claim_unused_channel(true);
+    // spi0_dmatx = dma_claim_unused_channel(true);
+    spi0_dmatx = 1;     // todo: fix hardcoded DMA channel
 
     // We set the outbound DMA to transfer from a memory buffer to the SPI
     // transmit FIFO paced by the SPI TX FIFO DREQ
