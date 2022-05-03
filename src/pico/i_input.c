@@ -466,7 +466,9 @@ void I_BindInputVariables(void)
 }
 
 #if PICO_NO_HARDWARE
+#if !PICO_LCD
 #include "pico/scanvideo.h"
+#endif
 #else
 #define WITH_SHIFT 0x8000
 #endif

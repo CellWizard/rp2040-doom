@@ -26,8 +26,8 @@ if (PICO_ON_DEVICE)
 
     # lcd support
     target_sources(common_pico INTERFACE
-        ${CMAKE_CURRENT_LIST_DIR}/lcd/hw_spi0.c
-        ${CMAKE_CURRENT_LIST_DIR}/lcd/hw_spi0.h
+        ${CMAKE_CURRENT_LIST_DIR}/lcd/hw_spi0_video.c
+        ${CMAKE_CURRENT_LIST_DIR}/lcd/hw_spi0_video.h
         ${CMAKE_CURRENT_LIST_DIR}/lcd/disp_init.c
         ${CMAKE_CURRENT_LIST_DIR}/lcd/disp_st7789.c
         ${CMAKE_CURRENT_LIST_DIR}/lcd/disp_lcd.h
@@ -47,7 +47,13 @@ target_compile_definitions(common_pico INTERFACE
         )
 
 pico_generate_pio_header(common_pico ${CMAKE_CURRENT_LIST_DIR}/video_doom.pio)
+
+if (PICO_LCD)
+target_link_libraries(common_pico INTERFACE pico_stdlib pico_multicore)
+else()
 target_link_libraries(common_pico INTERFACE pico_stdlib pico_multicore pico_scanvideo_dpi)
+endif()
+
 
 add_library(pico_cd INTERFACE)
 if (TARGET tinyusb_host)

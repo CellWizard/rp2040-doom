@@ -4,7 +4,7 @@
 #include "hardware/gpio.h"
 
 #include "disp_lcd.h"
-#include "hw_spi0.h"
+#include "hw_spi0_video.h"
 
 
 void lcd_gpio_init()
@@ -19,7 +19,11 @@ void lcd_gpio_init()
 
     gpio_init(LCD_PIN_RESET);
     gpio_init(LCD_PIN_DC);
-
+#ifdef CW_BACKLIGHT
+    gpio_init(LCD_PIN_BL);
+    gpio_set_dir(LCD_PIN_BL, GPIO_OUT);
+    gpio_put(LCD_PIN_BL, 1);
+#endif
     gpio_set_dir(LCD_PIN_RESET, GPIO_OUT);
     gpio_set_dir(LCD_PIN_DC,    GPIO_OUT);
 

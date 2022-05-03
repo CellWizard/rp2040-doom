@@ -3,7 +3,7 @@
 #include "pico/stdlib.h"
 
 #include "disp_lcd.h"
-#include "hw_spi0.h"
+#include "hw_spi0_video.h"
 
 
 // platform-specific

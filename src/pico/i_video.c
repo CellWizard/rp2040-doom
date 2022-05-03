@@ -19,7 +19,6 @@
 //	DOOM graphics stuff for Pico.
 //
 
-#if PICODOOM_RENDER_NEWHOPE
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
@@ -44,9 +43,10 @@
 #include "v_video.h"
 #include "w_wad.h"
 #include "z_zone.h"
-
+#if !PICO_LCD
 #include "pico/scanvideo.h"
 #include "pico/scanvideo/composable_scanline.h"
+#endif
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include "pico/time.h"
@@ -59,9 +59,10 @@
 #include "hardware/dma.h"
 #include "hardware/structs/xip_ctrl.h"
 #if PICO_LCD
+#define RGB8_TO_RGB565(r,g,b) (((r>>3)<<0) | ((g>>2)<<5) | ((b>>3)<<11))
 #warning "building in LCD mode"
 #include "lcd/disp_lcd.h"
-#include "lcd/hw_spi0.h"
+#include "lcd/hw_spi0_video.h"
 #endif
 #endif
 
@@ -78,22 +79,22 @@ typedef struct __packed {
 #include "fonts/normal.h"
 
 static uint16_t ega_colors[] = {
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x00, 0x00, 0x00),         // 0: Black
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x00, 0x00, 0xa8),         // 1: Blue
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x00, 0xa8, 0x00),         // 2: Green
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x00, 0xa8, 0xa8),         // 3: Cyan
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xa8, 0x00, 0x00),         // 4: Red
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xa8, 0x00, 0xa8),         // 5: Magenta
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xa8, 0x54, 0x00),         // 6: Brown
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xa8, 0xa8, 0xa8),         // 7: Grey
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x54, 0x54, 0x54),         // 8: Dark grey
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x54, 0x54, 0xfe),         // 9: Bright blue
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x54, 0xfe, 0x54),         // 10: Bright green
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0x54, 0xfe, 0xfe),         // 11: Bright cyan
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xfe, 0x54, 0x54),         // 12: Bright red
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xfe, 0x54, 0xfe),         // 13: Bright magenta
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xfe, 0xfe, 0x54),         // 14: Yellow
-    PICO_SCANVIDEO_PIXEL_FROM_RGB8(0xfe, 0xfe, 0xfe),         // 15: Bright white
+    RGB8_TO_RGB565(0x00, 0x00, 0x00),         // 0: Black
+    RGB8_TO_RGB565(0x00, 0x00, 0xa8),         // 1: Blue
+    RGB8_TO_RGB565(0x00, 0xa8, 0x00),         // 2: Green
+    RGB8_TO_RGB565(0x00, 0xa8, 0xa8),         // 3: Cyan
+    RGB8_TO_RGB565(0xa8, 0x00, 0x00),         // 4: Red
+    RGB8_TO_RGB565(0xa8, 0x00, 0xa8),         // 5: Magenta
+    RGB8_TO_RGB565(0xa8, 0x54, 0x00),         // 6: Brown
+    RGB8_TO_RGB565(0xa8, 0xa8, 0xa8),         // 7: Grey
+    RGB8_TO_RGB565(0x54, 0x54, 0x54),         // 8: Dark grey
+    RGB8_TO_RGB565(0x54, 0x54, 0xfe),         // 9: Bright blue
+    RGB8_TO_RGB565(0x54, 0xfe, 0x54),         // 10: Bright green
+    RGB8_TO_RGB565(0x54, 0xfe, 0xfe),         // 11: Bright cyan
+    RGB8_TO_RGB565(0xfe, 0x54, 0x54),         // 12: Bright red
+    RGB8_TO_RGB565(0xfe, 0x54, 0xfe),         // 13: Bright magenta
+    RGB8_TO_RGB565(0xfe, 0xfe, 0x54),         // 14: Yellow
+    RGB8_TO_RGB565(0xfe, 0xfe, 0xfe),         // 15: Bright white
 };
 #endif
 
@@ -136,8 +137,8 @@ unsigned int joywait = 0;
 
 pixel_t *I_VideoBuffer; // todo can't have this
 
-uint8_t __aligned(4) frame_buffer[2][SCREENWIDTH*MAIN_VIEWHEIGHT];
-static uint16_t palette[256];
+uint8_t __aligned(4) frame_buffer[2][SCREENWIDTH*SCREENHEIGHT];
+uint16_t palette[256];
 static uint16_t __scratch_x("shared_pal") shared_pal[NUM_SHARED_PALETTES][16];
 static int8_t next_pal=-1;
 
@@ -158,18 +159,21 @@ static uint8_t *text_font_cpy;
 static uint32_t missing_scanline_data[] =
         {
 #if YELLOW_SUBMARINE
-                video_doom_offset_color_run | (PICO_SCANVIDEO_PIXEL_FROM_RGB8(255,255,0) << 16u),
+                video_doom_offset_color_run | (RGB8_TO_RGB565(255,255,0) << 16u),
                 120 | (video_doom_offset_raw_1p << 16u),
 #endif
                 0u | (video_doom_offset_end_of_scanline_ALIGN << 16u)
         };
 
 #if PICO_ON_DEVICE
+#if !PICO_LCD
 bool video_doom_adapt_for_mode(const struct scanvideo_pio_program *program, const struct scanvideo_mode *mode,
                                struct scanvideo_scanline_buffer *missing_scanvideo_scanline_buffer, uint16_t *modifiable_instructions);
 pio_sm_config video_doom_configure_pio(pio_hw_t *pio, uint sm, uint offset);
-pio_sm_config video_doom_configure_lcd(pio_hw_t *pio, uint sm, uint offset);
 #endif
+void video_doom_configure_lcd();
+#endif
+#if !PICO_LCD
 #define VIDEO_DOOM_PROGRAM_NAME "doom"
 const struct scanvideo_pio_program video_doom = {
 #if PICO_ON_DEVICE
@@ -180,16 +184,9 @@ const struct scanvideo_pio_program video_doom = {
         .id = VIDEO_DOOM_PROGRAM_NAME
 #endif
 };
-const struct scanvideo_pio_program video_doom_lcd = {
-#if PICO_ON_DEVICE
-        .program = &video_doom_program,
-        .adapt_for_mode = video_doom_adapt_for_mode,
-        .configure_pio = video_doom_configure_lcd,
-#else
-        .id = VIDEO_DOOM_PROGRAM_NAME
 #endif
-};
 
+#if !PICO_LCD
 const scanvideo_timing_t vga_timing_1280x1000_60_default = // same as 1280x1024_60 standard just with some 12 blank lines at the top and bottom
         {
                 .clock_freq = 108000000,
@@ -243,18 +240,10 @@ const scanvideo_mode_t vga_mode_320x200 =
                 .xscale = 2,
                 .yscale = 5,
         };
+#endif
 #define VGA_MODE vga_mode_320x200
 
 #if PICO_LCD
-const scanvideo_mode_t lcd_mode_st7789 =
-        {
-                .default_timing = &vga_timing_640x1000_60_default,  // needed to ensure timings are the same as VGA mode
-                .pio_program = &video_doom_lcd,
-                .width = 320,
-                .height = 200,
-                .xscale = 2,
-                .yscale = 5,
-        };
 #undef VGA_MODE
 #define VGA_MODE lcd_mode_st7789
 #endif
@@ -262,6 +251,7 @@ const scanvideo_mode_t lcd_mode_st7789 =
 #elif USE_320x240x60
 #define VGA_MODE vga_mode_320x240_60
 #else
+#if !PICO_LCD
 const scanvideo_mode_t vga_mode_320x200_60 =
         {
                 .default_timing = &vga_timing_1280x1024_60_default,
@@ -271,7 +261,7 @@ const scanvideo_mode_t vga_mode_320x200_60 =
                 .xscale = 4,
                 .yscale = 5,
         };
-
+#endif
 #define VGA_MODE vga_mode_320x200_60
 #endif
 
@@ -417,6 +407,7 @@ static void scanline_func_none(uint32_t *dest, int scanline) {
     memset(dest, 0, SCREENWIDTH * 2);
 }
 
+#if !PICO_LCD
 #if SUPPORT_TEXT
 void check_text_buffer(scanvideo_scanline_buffer_t *buffer) {
 #if PICO_ON_DEVICE
@@ -586,30 +577,39 @@ static void __noinline render_text_mode_scanline(scanvideo_scanline_buffer_t *bu
 #endif
 }
 #endif
-
+#endif
 #define TESTWIDTH    240
-uint8_t lfb[TESTWIDTH*2];
 uint16_t colorval = 0;
-static void __not_in_flash_func(lcd_display)(uint32_t *dest, int scanline)
+static int __not_in_flash_func(lcd_display_frame)(uint8_t *framebuffer, uint8_t* status_framebuffer)
 {
     // total hack for DMA right now
-    if (dma_channel_is_busy(1)) return;
-
-    // set render window
-    gpio_put(LCD_SPI_PIN_NSS, 1);
-    st7789_set_addr_window(0, scanline, 320, 4);
-
-    uint8_t *d = lfb;
-    while (d < (lfb + TESTWIDTH*2)) {
-        *d++ = (((*dest  ) >> 24)       );
-        *d++ = (((*dest  ) >> 16) & 0xff);
-        *d++ = (((*dest  ) >>  8) & 0xff);
-        *d++ = (((*dest++)      ) & 0xff);
+    if (display_video_type != VIDEO_TYPE_DOUBLE) {
+	    while (dma_channel_is_busy(1)) {
+	    }
+	    while (sent_pixels != 0) {
+	    }
     }
+    if (dma_channel_is_busy(1)) return 0;
+    if ((sent_pixels != 0)) return 0;
+    if (display_video_type == VIDEO_TYPE_DOUBLE) {
+    	    // set render window
+	    gpio_put(LCD_SPI_PIN_NSS, 1);
+	    st7789_set_addr_window(0, 0, 320, 200);
+	    
+	    // send to LCD
+	    gpio_put(LCD_SPI_PIN_NSS, 0);
+	    spi0_video_tx(framebuffer,status_framebuffer, palette, 320*(200)*2);
+    } else {
+    	// set render window
+	    gpio_put(LCD_SPI_PIN_NSS, 1);
+	    st7789_set_addr_window(0, 0, 320, 200);
+	    
+	    // send to LCD
+	    gpio_put(LCD_SPI_PIN_NSS, 0);
+	    spi0_video_tx(framebuffer,status_framebuffer, palette, 320*(200)*2);
 
-    // send to LCD
-    gpio_put(LCD_SPI_PIN_NSS, 0);
-    spi0_tx(lfb, TESTWIDTH*2);
+    }
+    return 1;
     //spi_write_blocking(spi0, lcd_data, 240*2);
 
     // colorval++;
@@ -624,7 +624,6 @@ static void __not_in_flash_func(scanline_func_double)(uint32_t *dest, int scanli
 //        }
     palette_convert_scanline(dest, src);
 #if PICO_LCD
-    lcd_display(dest, scanline);
 #endif
 }
 
@@ -645,11 +644,12 @@ static void __not_in_flash_func(scanline_func_single)(uint32_t *dest, int scanli
 #endif
     palette_convert_scanline(dest, src);
 #if PICO_LCD
-    lcd_display(dest, scanline);
 #endif
 }
 
 static void scanline_func_wipe(uint32_t *dest, int scanline) {
+
+#if !PICO_LCD
     const uint8_t *src;
 #if 0
     if (scanline < MAIN_VIEWHEIGHT) {
@@ -685,6 +685,7 @@ static void scanline_func_wipe(uint32_t *dest, int scanline) {
             }
         }
     }
+#endif // !PICO_LCD
 }
 
 static inline uint draw_vpatch(uint16_t *dest, patch_t *patch, vpatchlist_t *vp, uint off) {
@@ -944,7 +945,7 @@ void __noinline new_frame_init_overlays_palette_and_wipe() {
                         g = gammatable[usegamma-1][g];
                         b = gammatable[usegamma-1][b];
                     }
-                    palette[i] = PICO_SCANVIDEO_PIXEL_FROM_RGB8(r, g, b);
+                    palette[i] = RGB8_TO_RGB565(r, g, b);
                 }
             } else {
                 int mul, r0, g0, b0;
@@ -966,7 +967,7 @@ void __noinline new_frame_init_overlays_palette_and_wipe() {
                     r += ((r0 - r) * mul) >> 16;
                     g += ((g0 - g) * mul) >> 16;
                     b += ((b0 - b) * mul) >> 16;
-                    palette[i] = PICO_SCANVIDEO_PIXEL_FROM_RGB8(r, g, b);
+                    palette[i] = RGB8_TO_RGB565(r, g, b);
                 }
             }
             next_pal = -1;
@@ -1039,6 +1040,22 @@ void new_frame_stuff() {
 }
 
 void __scratch_x("scanlines") fill_scanlines() {
+#if PICO_LCD
+	    sem_acquire_blocking(&render_frame_ready);
+            display_video_type = next_video_type;
+            display_frame_index = next_frame_index;
+            display_overlay_index = next_overlay_index;
+    	    lcd_display_frame(frame_buffer[display_frame_index],frame_buffer[display_frame_index^1]);
+//	        display_video_type = next_video_type;
+//	        display_frame_index = next_frame_index;
+//	        display_overlay_index = next_overlay_index;
+	#if !DEMO1_ONLY
+	        video_scroll = next_video_scroll; // todo does this waste too much space
+	#endif
+	if (display_video_type != VIDEO_TYPE_SAVING) {
+            new_frame_init_overlays_palette_and_wipe();
+        }
+#else // !PICO_LCD
 #if SUPPORT_TEXT
     struct scanvideo_scanline_buffer *buffer = scanvideo_begin_scanline_generation_linked(display_video_type == VIDEO_TYPE_TEXT ? 2 : 1, false);
 #else
@@ -1133,6 +1150,7 @@ void __scratch_x("scanlines") fill_scanlines() {
         interp_restore_static(interp1, &interp1_save);
     }
 #endif
+#endif // !PICO_LCD
 }
 #pragma GCC pop_options
 
@@ -1152,24 +1170,37 @@ static void core1() {
 #if !PICO_ON_DEVICE
     void simulate_video_pio_video_doom(const uint32_t *dma_data, uint32_t dma_data_size,
                                        uint16_t *pixel_buffer, int32_t max_pixels, int32_t expected_width, bool overlay);
+#if !PICO_LCD
     scanvideo_set_simulate_scanvideo_pio_fn(VIDEO_DOOM_PROGRAM_NAME, simulate_video_pio_video_doom);
 #endif
+#endif
+#if !PICO_LCD
     scanvideo_setup(&VGA_MODE);
+#endif
 //    sem_release(&init_sem);
 #if PICO_ON_DEVICE
+#if !PICO_LCD
     irq_set_exclusive_handler(LOW_PRIO_IRQ, fill_scanlines);
     irq_set_enabled(LOW_PRIO_IRQ, true);
     scanvideo_set_scanline_release_fn(free_buffer_callback);
 #endif
+#endif
+#if !PICO_LCD
     scanvideo_timing_enable(true);
 #if PICO_ON_DEVICE
     irq_set_pending(LOW_PRIO_IRQ);
 #endif
+#endif
     sem_release(&core1_launch);
+    video_doom_configure_lcd();
     while (true) {
         pd_core1_loop();
 #if PICO_ON_DEVICE
+#if PICO_LCD
+	fill_scanlines();
+#else
         tight_loop_contents();
+#endif
 #else
         fill_scanlines();
 #endif
@@ -1440,6 +1471,7 @@ void I_DisplayFPSDots(boolean dots_on)
 }
 
 #if PICO_ON_DEVICE
+#if !PICO_LCD
 bool video_doom_adapt_for_mode(const struct scanvideo_pio_program *program, const struct scanvideo_mode *mode,
                                struct scanvideo_scanline_buffer *missing_scanvideo_scanline_buffer, uint16_t *modifiable_instructions) {
     missing_scanvideo_scanline_buffer->data = missing_scanline_data;
@@ -1452,14 +1484,12 @@ pio_sm_config video_doom_configure_pio(pio_hw_t *pio, uint sm, uint offset) {
     scanvideo_default_configure_pio(pio, sm, offset, &config, false);
     return config;
 }
-#if PICO_LCD
-pio_sm_config video_doom_configure_lcd(pio_hw_t *pio, uint sm, uint offset) {
-    pio_sm_config config = video_24mhz_composable_default_program_get_default_config(offset);
+#else
+void video_doom_configure_lcd() {
     lcd_gpio_init();
-    spi0_init(LCD_SPI_PIN_MOSI, LCD_SPI_PIN_SCK, LCD_SPI_PIN_NSS, LCD_SPI_CLOCK, SPI0_MODE0);
-    st7789_init(135, 240, 3);
-    //st7789_init(320, 240, 3);
-    return config;
+    spi0_video_init(LCD_SPI_PIN_MOSI, LCD_SPI_PIN_SCK, LCD_SPI_PIN_NSS, LCD_SPI_CLOCK, SPI0_MODE0);
+//    st7789_init(135, 240, 3);
+    st7789_init(240, 320, 3);
 }
 #endif
 #else

@@ -167,7 +167,7 @@ int pd_frame;
 int pd_flag;
 fixed_t pd_scale;
 
-extern uint8_t __aligned(4) frame_buffer[2][SCREENWIDTH * MAIN_VIEWHEIGHT];
+extern uint8_t __aligned(4) frame_buffer[2][SCREENWIDTH * SCREENHEIGHT];
 static uint8_t __aligned(4) visplane_bit[(SCREENWIDTH / 8) * MAIN_VIEWHEIGHT]; // this is also used for patch decoding in core1 (since flats are done by then)
 static int8_t flatnum_first[256];
 
@@ -2469,6 +2469,7 @@ void draw_stbar_on_framebuffer(int frame, boolean refresh) {
     V_RestoreBuffer();
     V_DrawPatchList(vpatchlists->framebuffer);
     I_VideoBuffer = render_frame_buffer;
+    V_RestoreBuffer();
 }
 
 static void draw_framebuffer_patches_fullscreen() {
@@ -2805,7 +2806,9 @@ void pd_end_frame(int wipe_start) {
                     if (automapactive)
                         AM_Drawer();
                     // goes into overlay set above
-                    ST_Drawer(false, !pre_wipe_state);
+//                    ST_Drawer(false, !pre_wipe_state);
+                    draw_stbar_on_framebuffer(render_frame_index^1, true);
+		    //draw_framebuffer_patches_fullscreen();
                     sub_gamestate = 0;
                     next_video_type = VIDEO_TYPE_DOUBLE;
                 }
@@ -2866,8 +2869,9 @@ void pd_end_frame(int wipe_start) {
                         // hack alert: we draw the status bar (to be immediately overdrawn) as a first thing so that we don't have a cold cache
                         // when we draw it in the middle of the first wipe where it causes a cache fight with the video_newhope scanline stuff
                         draw_stbar_on_framebuffer(render_frame_index, false);
-                        warmup_done = true;
-                    }
+                        warmup_done = true; 
+                    } else {
+		    }
                     int pnum = W_GetNumForName(pagename);
                     assert(pnum);
                     maybe_draw_single_screen(pnum);
