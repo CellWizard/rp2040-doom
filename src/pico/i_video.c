@@ -584,10 +584,10 @@ static int __not_in_flash_func(lcd_display_frame)(uint8_t *framebuffer, uint8_t*
 {
     // total hack for DMA right now
     if (display_video_type != VIDEO_TYPE_DOUBLE) {
-	    while (dma_channel_is_busy(1)) {
-	    }
-	    while (sent_pixels != 0) {
-	    }
+//	    while (dma_channel_is_busy(1)) {
+//	    }
+//	    while (sent_pixels != 0) {
+//	    }
     }
     if (dma_channel_is_busy(1)) return 0;
     if ((sent_pixels != 0)) return 0;
