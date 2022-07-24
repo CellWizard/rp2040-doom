@@ -1,19 +1,17 @@
 #ifndef __PICO_LCD_DISP_LCD_H
 
 
-#define LCD_SPI_CLOCK           (110 * 1000000)      // max rate 15MHz in write mode per DS, 32MHz seen in the wild
+#define LCD_SPI_CLOCK           (50 * 1000000)      // max rate 15MHz in write mode per DS, 32MHz seen in the wild
 
 #define LCD_SPI_PIN_MOSI        7
 #define LCD_SPI_PIN_SCK         6
 #define LCD_SPI_PIN_NSS         5
 
-#define LCD_PIN_RESET           3
+#define LCD_PIN_RESET           8
 #define LCD_PIN_DC              4
 
 #ifdef CW_BACKLIGHT
-
-#define LCD_PIN_BL        10
-
+#define LCD_PIN_BL              9
 #endif
 
 #define ST7789_TYPE_320x240		0

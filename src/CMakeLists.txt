@@ -636,7 +636,7 @@ if (PICO_SDK)
             NO_USE_FINALE_BUNNY=1
     )
     target_compile_definitions(doom_tiny PRIVATE
-            TINY_WAD_ADDR=0x10040000
+            TINY_WAD_ADDR=0x10042000
     )
     target_link_libraries(doom_tiny PRIVATE tiny_settings)
     add_doom_tiny(_nost render_newhope)

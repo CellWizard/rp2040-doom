@@ -32,10 +32,22 @@
 
 #include "doomtype.h"
 #include "i_picosound.h"
+
+#include "pico/audio.h"
+#ifdef PICODOOM_I2S
 #include "pico/audio_i2s.h"
+#endif
+#ifdef PICODOOM_PWM
+#include "hardware/irq.h"
+#include "hardware/dma.h"
+#include "hardware/regs/intctrl.h"
+#include "doom_audio.pio.h"
+#define PWM_LEFT_GPIO 28
+#define PWM_RIGHT_GPIO 27
+#endif
 #include "pico/binary_info.h"
 #include "hardware/gpio.h"
-
+#define AUDIO_BUFFER_SIZE 256       // upstream was 1024
 #define ADPCM_BLOCK_SIZE 128
 #define ADPCM_SAMPLES_PER_BLOCK_SIZE 249
 #define LOW_PASS_FILTER
@@ -66,7 +78,7 @@ struct channel_s
 };
 
 static struct audio_buffer_pool *producer_pool;
-
+static struct audio_buffer_pool *pwm_consumer_pool;
 static struct audio_format audio_format = {
         .format = AUDIO_BUFFER_FORMAT_PCM_S16,
         .sample_freq = PICO_SOUND_SAMPLE_FREQ,
@@ -326,11 +338,36 @@ static boolean I_Pico_SoundIsPlaying(int channel)
     if (!check_and_init_channel(channel)) return false;
     return is_channel_playing(channel);
 }
-
+static audio_buffer_t* last_dma_audio_buffer=NULL;
+static void __isr __time_critical_func(doom_audio_dma_irq_handler)()
+{
+	if (dma_irqn_get_channel_status(DMA_IRQ_1,6)) {
+		dma_channel_acknowledge_irq1(6);
+	}
+	if (dma_irqn_get_channel_status(DMA_IRQ_1,7)) {
+		dma_channel_acknowledge_irq1(7);
+	}
+	if (last_dma_audio_buffer != NULL) {
+	    give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
+	}
+	if ((dma_channel_is_busy(6) == false) && dma_channel_is_busy(7) == false) {
+	    	audio_buffer_t * fullbuf=take_audio_buffer(pwm_consumer_pool,false);
+	        if (fullbuf) {
+	             last_dma_audio_buffer=fullbuf;	
+	    	     int32_t *samples = (int32_t *)fullbuf->buffer->bytes;
+		     dma_channel_set_read_addr(6,samples,false);
+		     dma_channel_set_read_addr(7,samples,false);
+		     dma_channel_set_trans_count(6,fullbuf->sample_count,false);
+		     dma_channel_set_trans_count(7,fullbuf->sample_count,false);
+		     dma_start_channel_mask((1<<6)|(1<<7));
+	        }
+	}
+}
 static void I_Pico_UpdateSound(void)
 {
     if (!sound_initialized) return;
 
+#ifdef PICODOOM_I2S
     // todo note this is called from D_Main around the game loop, which is fast enough now but may not be.
     //  we can either poll more frequently, or use IRQ but then we have to be careful with threading (both OPL and channels)
     // todo hopefully at least we can run the AI fast enough.
@@ -403,7 +440,122 @@ static void I_Pico_UpdateSound(void)
             }
         }
         give_audio_buffer(producer_pool, buffer);
+
     }
+    /*
+	if ((dma_channel_is_busy(6) == false) && dma_channel_is_busy(7) == false) {
+	    	audio_buffer_t * fullbuf=take_audio_buffer(pwm_consumer_pool,false);
+	        if (fullbuf) {
+	             if (last_dma_audio_buffer != NULL) {
+			 give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
+		     }
+	             last_dma_audio_buffer=fullbuf;	
+	    	     int32_t *samples = (int32_t *)fullbuf->buffer->bytes;
+		     dma_channel_set_read_addr(6,samples,false);
+		     dma_channel_set_read_addr(7,samples,false);
+		     dma_channel_set_trans_count(6,fullbuf->sample_count,false);
+		     dma_channel_set_trans_count(7,fullbuf->sample_count,false);
+		     dma_start_channel_mask((1<<6)|(1<<7));
+	        }
+	}*/
+#endif
+#ifdef PICODOOM_PWM
+    // todo note this is called from D_Main around the game loop, which is fast enough now but may not be.
+    //  we can either poll more frequently, or use IRQ but then we have to be careful with threading (both OPL and channels)
+    // todo hopefully at least we can run the AI fast enough.
+    audio_buffer_t *buffer = take_audio_buffer(producer_pool, false);
+    if (buffer) {
+        if (music_generator) {
+            // todo think about volume; this already has a (<< 3) in it
+            music_generator(buffer);
+        } else {
+            memset(buffer->buffer->bytes, 0, buffer->buffer->size);
+        }
+        for(int ch=0; ch < NUM_SOUND_CHANNELS; ch++) {
+            if (is_channel_playing(ch)) {
+                channel_t *channel = &channels[ch];
+                assert(channel->decompressed_size);
+                int voll = channel->left/2;
+                int volr = channel->right/2;
+                uint offset_end = channel->decompressed_size * 65536;
+                assert(channel->offset < offset_end);
+                int16_t *samples = (int16_t *)buffer->buffer->bytes;
+#if SOUND_LOW_PASS
+                int alpha256 = channel->alpha256;
+                int beta256 = 256 - alpha256;
+                int sample = channel->decompressed[channel->offset >> 16];
+#endif
+                for(int s=0;s<buffer->max_sample_count;s++) {
+#if !SOUND_LOW_PASS
+                    int sample = channel->decompressed[channel->offset >> 16];
+#else
+                    // todo graham, note that since we are all at the same frequency (and it isn't the end
+                    //  of the world anyway, we could do this across all channels at once)
+                    sample = (beta256 * sample + alpha256 * channel->decompressed[channel->offset >> 16]) / 256;
+#endif
+                    *samples++ += sample * voll;
+                    *samples++ += sample * volr;
+                    channel->offset += channel->step;
+                    if (channel->offset >= offset_end) {
+                        channel->offset -= offset_end;
+                        decompress_buffer(channel);
+                        offset_end = channel->decompressed_size * 65536;
+                        if (channel->offset >= offset_end) {
+                            stop_channel(ch);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        buffer->sample_count = buffer->max_sample_count;
+        if (fade_state == FS_SILENT) {
+            memset(buffer->buffer->bytes, 0, buffer->buffer->size);
+        } else if (fade_state != FS_NONE) {
+            int16_t *samples = (int16_t *)buffer->buffer->bytes;
+            int fade_step = fade_state == FS_FADE_IN ? FADE_STEP : -FADE_STEP;
+            int i;
+            for(i=0;i<buffer->sample_count * 2 && fade_level;i+=2) {
+                samples[i] = (samples[i] * (int)fade_level) >> 16;
+                samples[i+1] = (samples[i+1] * (int)fade_level) >> 16;
+                fade_level += fade_step;
+            }
+            if (!fade_level) {
+                if (fade_state == FS_FADE_OUT) {
+                    for(;i<buffer->sample_count * 2;i++) {
+                        samples[i] = 0;
+                    }
+                    fade_state = FS_SILENT;
+                } else {
+                    fade_state = FS_NONE;
+                }
+            }
+        }
+	int32_t *samples = (int32_t *)buffer->buffer->bytes;
+	for (uint si=0; si < buffer->sample_count; si++) {
+		samples[si] >>= 2;
+	}
+        give_audio_buffer(producer_pool, buffer);
+    }
+/*	if ((dma_channel_is_busy(6) == false) && dma_channel_is_busy(7) == false) {
+//		audio_buffer_t * fullbuf = stereo_to_stereo_consumer_take(pwm_consumer_pool->connection,false);
+	    	audio_buffer_t * fullbuf=take_audio_buffer(pwm_consumer_pool,false);
+	        if (fullbuf) {
+	             if (last_dma_audio_buffer != NULL) {
+			 give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
+		     }
+	             last_dma_audio_buffer=fullbuf;	
+	    	     int32_t *samples = (int32_t *)fullbuf->buffer->bytes;
+		     dma_channel_set_read_addr(6,samples,false);
+		     dma_channel_set_read_addr(7,samples,false);
+		     dma_channel_set_trans_count(6,fullbuf->sample_count,false);
+		     dma_channel_set_trans_count(7,fullbuf->sample_count,false);
+		     dma_start_channel_mask((1<<6)|(1<<7));
+	        }
+	}
+*/	
+#endif	
+
 }
 
 static void I_Pico_ShutdownSound(void)
@@ -414,6 +566,58 @@ static void I_Pico_ShutdownSound(void)
     }
     sound_initialized = false;
 }
+static void doom_audio_set_pwm_period(PIO pio, uint sm, uint32_t period) {
+    pio_sm_set_enabled(pio, sm, false);
+    pio_sm_put_blocking(pio, sm, period);
+    pio_sm_exec(pio, sm, pio_encode_pull(false, false));
+    pio_sm_exec(pio, sm, pio_encode_out(pio_isr, 32));
+    pio_sm_set_enabled(pio, sm, true);
+}
+static void producer_pool_blocking_give_to_pwm(audio_connection_t *connection, audio_buffer_t *buffer) {
+	struct producer_pool_blocking_give_connection *pbc = (struct producer_pool_blocking_give_connection *) connection;
+	uint32_t pos = 0;
+        while (pos < buffer->sample_count) {
+            if (!pbc->current_consumer_buffer) {
+                pbc->current_consumer_buffer = get_free_audio_buffer(pbc->core.consumer_pool, true);
+                pbc->current_consumer_buffer_pos = 0;
+            }
+            uint sample_count = MIN(buffer->sample_count - pos,
+                                     pbc->current_consumer_buffer->max_sample_count - pbc->current_consumer_buffer_pos);
+	    memcpy((((uint16_t*)pbc->current_consumer_buffer->buffer->bytes) + (pbc->current_consumer_buffer_pos*2)), (((uint16_t*)buffer->buffer->bytes) + (pos*2)),sample_count*sizeof(uint16_t)*2);
+	    pos += sample_count;
+	    pbc->current_consumer_buffer_pos += sample_count;
+	}
+	if (pbc->current_consumer_buffer_pos == pbc->current_consumer_buffer->max_sample_count) {
+            pbc->current_consumer_buffer->sample_count = pbc->current_consumer_buffer->max_sample_count;
+            queue_full_audio_buffer(pbc->core.consumer_pool, pbc->current_consumer_buffer);
+            pbc->current_consumer_buffer = NULL;
+	}
+        queue_free_audio_buffer(pbc->core.producer_pool, buffer);
+	if (((dma_channel_is_busy(6) == false) && dma_channel_is_busy(7) == false)) {
+                audio_buffer_t * fullbuf=take_audio_buffer(pwm_consumer_pool,false);
+                if (fullbuf) {
+                     if (last_dma_audio_buffer != NULL) {
+                         give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
+                     }
+                     last_dma_audio_buffer=fullbuf;
+                     int32_t *samples = (int32_t *)fullbuf->buffer->bytes;
+                     dma_channel_set_read_addr(6,samples,false);
+                     dma_channel_set_read_addr(7,samples,false);
+                     dma_channel_set_trans_count(6,fullbuf->sample_count,false);
+                     dma_channel_set_trans_count(7,fullbuf->sample_count,false);
+                     dma_start_channel_mask((1<<6)|(1<<7));
+                }
+        }
+}
+static struct producer_pool_blocking_give_connection producer_pool_blocking_give_connection_singleton = {
+        .core = {
+                .consumer_pool_take = consumer_pool_take_buffer_default,
+                .consumer_pool_give = consumer_pool_give_buffer_default,
+                .producer_pool_take = producer_pool_take_buffer_default,
+		.producer_pool_give = producer_pool_blocking_give_to_pwm, 
+        }
+        // rest 0 initialized
+};
 
 static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
 {
@@ -421,7 +625,8 @@ static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
     use_sfx_prefix = _use_sfx_prefix;
 
     // todo this will likely need adjustment - maybe with IRQs/double buffer & pull from audio we can make it quite small
-    producer_pool = audio_new_producer_pool(&producer_format, 2, 1024); // todo correct size
+#ifdef PICODOOM_I2S
+    producer_pool = audio_new_producer_pool(&producer_format, 2, AUDIO_BUFFER_SIZE); // todo correct size
 
     struct audio_i2s_config config = {
             .data_pin = PICO_AUDIO_I2S_DATA_PIN,
@@ -451,7 +656,42 @@ static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
 
     assert(ok);
     audio_i2s_set_enabled(true);
-
+#endif
+#ifdef PICODOOM_PWM
+    producer_pool = audio_new_producer_pool(&producer_format, 1, AUDIO_BUFFER_SIZE); // todo correct size
+    pwm_consumer_pool = audio_new_consumer_pool(&producer_format, 3, AUDIO_BUFFER_SIZE); // todo correct size
+    audio_complete_connection(&producer_pool_blocking_give_connection_singleton.core,producer_pool,pwm_consumer_pool);
+    PIO pio=pio1;
+    uint offset2 = pio_add_program(pio,&doom_audio_program);
+    // PWM LEFT
+    doom_audio_program_init(pio,2,offset2, PWM_LEFT_GPIO);
+    uint offset3 = pio_add_program(pio,&doom_audio_program);
+    // PWM LEFT
+    doom_audio_program_init(pio,3,offset3, PWM_RIGHT_GPIO);
+    doom_audio_set_pwm_period(pio,2,64);
+    doom_audio_set_pwm_period(pio,3,64);
+    irq_set_exclusive_handler(DMA_IRQ_1, doom_audio_dma_irq_handler);
+    irq_set_enabled(DMA_IRQ_1,true);
+    dma_channel_claim(6); 
+    dma_timer_claim(2); 
+    dma_timer_set_fraction(2,1,2833);
+    dma_timer_claim(3); 
+    dma_timer_set_fraction(3,1,2833);
+    dma_channel_claim(7); 
+    dma_channel_config dma_left_config = dma_channel_get_default_config(6);
+    dma_channel_config dma_right_config = dma_channel_get_default_config(7);
+    channel_config_set_dreq(&dma_left_config, dma_get_timer_dreq(2));
+    channel_config_set_write_increment(&dma_left_config, false);
+    channel_config_set_write_increment(&dma_right_config, false);
+    channel_config_set_dreq(&dma_right_config, dma_get_timer_dreq(3));
+    channel_config_set_read_increment(&dma_left_config, true);
+    channel_config_set_read_increment(&dma_right_config, true);
+    channel_config_set_enable(&dma_left_config,true);
+    channel_config_set_enable(&dma_right_config,true);
+    dma_channel_configure(6,&dma_left_config, &pio->txf[2], NULL, 0,false);
+    dma_channel_configure(7,&dma_right_config, &pio->txf[3], NULL, 0,false);
+    dma_set_irq1_channel_mask_enabled((1<<6) | (1<<7),true);
+#endif
     sound_initialized = true;
     return true;
 }

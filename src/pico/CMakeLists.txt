@@ -8,6 +8,7 @@ target_sources(common_pico INTERFACE
         ${CMAKE_CURRENT_LIST_DIR}/i_video.c
         ${CMAKE_CURRENT_LIST_DIR}/stubs.c
 
+        ${CMAKE_CURRENT_LIST_DIR}/i_picosound_pwm.cpp
         ${CMAKE_CURRENT_LIST_DIR}/i_picosound.c
 )
 if (PICO_ON_DEVICE)
@@ -44,12 +45,15 @@ target_compile_definitions(common_pico INTERFACE
         NO_USE_MOUSE=1
         PICO_AUDIO_I2S_PIO=1
         PICO_AUDIO_I2S_DMA_IRQ=1
+	PICO_AUDIO_PWM_DMA_IRQ=1
         )
 
 pico_generate_pio_header(common_pico ${CMAKE_CURRENT_LIST_DIR}/video_doom.pio)
-
+if (PICODOOM_PWM)
+	pico_generate_pio_header(common_pico ${CMAKE_CURRENT_LIST_DIR}/doom_audio.pio)
+endif()
 if (PICO_LCD)
-target_link_libraries(common_pico INTERFACE pico_stdlib pico_multicore)
+target_link_libraries(common_pico INTERFACE pico_stdlib pico_multicore hardware_pio)
 else()
 target_link_libraries(common_pico INTERFACE pico_stdlib pico_multicore pico_scanvideo_dpi)
 endif()

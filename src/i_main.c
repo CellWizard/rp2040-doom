@@ -50,7 +50,9 @@ void D_DoomMain (void);
 
 #if PICO_ON_DEVICE
 #include "pico/binary_info.h"
+#ifdef PICODOOM_I2S
 bi_decl(bi_3pins_with_names(PICO_AUDIO_I2S_DATA_PIN, "I2S DIN", PICO_AUDIO_I2S_CLOCK_PIN_BASE, "I2S BCK", PICO_AUDIO_I2S_CLOCK_PIN_BASE+1, "I2S LRCK"));
+#endif
 #endif
 
 int main(int argc, char **argv)

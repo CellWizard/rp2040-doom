@@ -16,6 +16,7 @@ if (NOT PICO_ON_DEVICE)
             )
 
     target_compile_definitions(whd_gen PRIVATE IS_WHD_GEN=1)
+    target_compile_options(whd_gen PRIVATE -fPIC)
 
     target_include_directories(whd_gen PRIVATE .. ../doom)
     target_link_libraries(whd_gen PRIVATE wad adpcm-lib)
