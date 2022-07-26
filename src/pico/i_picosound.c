@@ -347,9 +347,10 @@ static void __isr __time_critical_func(doom_audio_dma_irq_handler)()
 	if (dma_irqn_get_channel_status(DMA_IRQ_1,7)) {
 		dma_channel_acknowledge_irq1(7);
 	}
-	if (last_dma_audio_buffer != NULL) {
-	    give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
-	}
+        if (last_dma_audio_buffer != NULL) {
+             give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
+	     last_dma_audio_buffer=NULL;
+        }
 	if ((dma_channel_is_busy(6) == false) && dma_channel_is_busy(7) == false) {
 	    	audio_buffer_t * fullbuf=take_audio_buffer(pwm_consumer_pool,false);
 	        if (fullbuf) {
@@ -533,7 +534,7 @@ static void I_Pico_UpdateSound(void)
         }
 	int32_t *samples = (int32_t *)buffer->buffer->bytes;
 	for (uint si=0; si < buffer->sample_count; si++) {
-		samples[si] >>= 2;
+		samples[si] &= 0x7FFF;
 	}
         give_audio_buffer(producer_pool, buffer);
     }
@@ -595,10 +596,11 @@ static void producer_pool_blocking_give_to_pwm(audio_connection_t *connection, a
         queue_free_audio_buffer(pbc->core.producer_pool, buffer);
 	if (((dma_channel_is_busy(6) == false) && dma_channel_is_busy(7) == false)) {
                 audio_buffer_t * fullbuf=take_audio_buffer(pwm_consumer_pool,false);
+                if (last_dma_audio_buffer != NULL) {
+                     give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
+		     last_dma_audio_buffer=NULL;
+                }
                 if (fullbuf) {
-                     if (last_dma_audio_buffer != NULL) {
-                         give_audio_buffer(pwm_consumer_pool,last_dma_audio_buffer);
-                     }
                      last_dma_audio_buffer=fullbuf;
                      int32_t *samples = (int32_t *)fullbuf->buffer->bytes;
                      dma_channel_set_read_addr(6,samples,false);
@@ -674,9 +676,9 @@ static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
     irq_set_enabled(DMA_IRQ_1,true);
     dma_channel_claim(6); 
     dma_timer_claim(2); 
-    dma_timer_set_fraction(2,1,2833);
+    dma_timer_set_fraction(2,1,6122);
     dma_timer_claim(3); 
-    dma_timer_set_fraction(3,1,2833);
+    dma_timer_set_fraction(3,1,6122);
     dma_channel_claim(7); 
     dma_channel_config dma_left_config = dma_channel_get_default_config(6);
     dma_channel_config dma_right_config = dma_channel_get_default_config(7);
