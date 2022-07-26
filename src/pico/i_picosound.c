@@ -534,7 +534,11 @@ static void I_Pico_UpdateSound(void)
         }
 	int32_t *samples = (int32_t *)buffer->buffer->bytes;
 	for (uint si=0; si < buffer->sample_count; si++) {
-		samples[si] &= 0x7FFF;
+		samples[si] &= 0xFFFF;
+		samples[si] >>= 10;
+		if (samples[si] >= 32) {
+			samples[si] = 32-samples[si];
+		}
 	}
         give_audio_buffer(producer_pool, buffer);
     }
