@@ -47,7 +47,7 @@
 #endif
 #include "pico/binary_info.h"
 #include "hardware/gpio.h"
-#define AUDIO_BUFFER_SIZE 256       // upstream was 1024
+#define AUDIO_BUFFER_SIZE 249       // upstream was 1024
 #define ADPCM_BLOCK_SIZE 128
 #define ADPCM_SAMPLES_PER_BLOCK_SIZE 249
 #define LOW_PASS_FILTER
@@ -464,6 +464,12 @@ static void I_Pico_UpdateSound(void)
     // todo note this is called from D_Main around the game loop, which is fast enough now but may not be.
     //  we can either poll more frequently, or use IRQ but then we have to be careful with threading (both OPL and channels)
     // todo hopefully at least we can run the AI fast enough.
+    audio_buffer_t * consumer_buf = get_free_audio_buffer(pwm_consumer_pool,false);
+    if (!consumer_buf) {
+	    return;
+    } else {
+	    queue_free_audio_buffer(pwm_consumer_pool,consumer_buf);
+    }
     audio_buffer_t *buffer = take_audio_buffer(producer_pool, false);
     if (buffer) {
         if (music_generator) {
@@ -532,14 +538,13 @@ static void I_Pico_UpdateSound(void)
                 }
             }
         }
-	int32_t *samples = (int32_t *)buffer->buffer->bytes;
+	uint32_t *samples = (uint32_t *)buffer->buffer->bytes;
 	for (uint si=0; si < buffer->sample_count; si++) {
-		samples[si] &= 0xFFFF;
-		samples[si] >>= 10;
-		if (samples[si] >= 32) {
-			samples[si] = 32-samples[si];
-		}
+		samples[si] ^= 0x80008000;
+		samples[si] >>= 8;
+		samples[si] &= 0xFF;
 	}
+	
         give_audio_buffer(producer_pool, buffer);
     }
 /*	if ((dma_channel_is_busy(6) == false) && dma_channel_is_busy(7) == false) {
@@ -665,7 +670,7 @@ static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
 #endif
 #ifdef PICODOOM_PWM
     producer_pool = audio_new_producer_pool(&producer_format, 1, AUDIO_BUFFER_SIZE); // todo correct size
-    pwm_consumer_pool = audio_new_consumer_pool(&producer_format, 3, AUDIO_BUFFER_SIZE); // todo correct size
+    pwm_consumer_pool = audio_new_consumer_pool(&producer_format, 2, AUDIO_BUFFER_SIZE); // todo correct size
     audio_complete_connection(&producer_pool_blocking_give_connection_singleton.core,producer_pool,pwm_consumer_pool);
     PIO pio=pio1;
     uint offset2 = pio_add_program(pio,&doom_audio_program);
@@ -674,15 +679,15 @@ static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
     uint offset3 = pio_add_program(pio,&doom_audio_program);
     // PWM LEFT
     doom_audio_program_init(pio,3,offset3, PWM_RIGHT_GPIO);
-    doom_audio_set_pwm_period(pio,2,64);
-    doom_audio_set_pwm_period(pio,3,64);
+    doom_audio_set_pwm_period(pio,2,256);
+    doom_audio_set_pwm_period(pio,3,256);
     irq_set_exclusive_handler(DMA_IRQ_1, doom_audio_dma_irq_handler);
     irq_set_enabled(DMA_IRQ_1,true);
     dma_channel_claim(6); 
     dma_timer_claim(2); 
-    dma_timer_set_fraction(2,1,6122);
+    dma_timer_set_fraction(2,1,5430);
     dma_timer_claim(3); 
-    dma_timer_set_fraction(3,1,6122);
+    dma_timer_set_fraction(3,1,5430);
     dma_channel_claim(7); 
     dma_channel_config dma_left_config = dma_channel_get_default_config(6);
     dma_channel_config dma_right_config = dma_channel_get_default_config(7);
