@@ -540,9 +540,10 @@ static void I_Pico_UpdateSound(void)
         }
 	uint32_t *samples = (uint32_t *)buffer->buffer->bytes;
 	for (uint si=0; si < buffer->sample_count; si++) {
-		samples[si] ^= 0x80008000;
+		samples[si] &= 0xFFFF;
 		samples[si] >>= 10;
-		samples[si] &= 0x3F;
+		samples[si] ^= 0x20;
+		samples[si] &= 0x3f;
 	}
 	
         give_audio_buffer(producer_pool, buffer);
@@ -679,8 +680,10 @@ static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
     uint offset3 = pio_add_program(pio,&doom_audio_program);
     // PWM LEFT
     doom_audio_program_init(pio,3,offset3, PWM_RIGHT_GPIO);
-    doom_audio_set_pwm_period(pio,2,96);
-    doom_audio_set_pwm_period(pio,3,96);
+    pio_sm_set_clkdiv(pio,2,1.0);
+    pio_sm_set_clkdiv(pio,3,1.0);
+    doom_audio_set_pwm_period(pio,2,128);
+    doom_audio_set_pwm_period(pio,3,128);
     irq_set_exclusive_handler(DMA_IRQ_1, doom_audio_dma_irq_handler);
     irq_set_enabled(DMA_IRQ_1,true);
     dma_channel_claim(6); 
